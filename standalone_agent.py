@@ -86,10 +86,9 @@ def bicycle_model_forward(x, dt, steer, throttle, brake):
     return np.array([new_x, new_y, new_heading, new_vel])
 
 
-def bicycle_model_predict(sigmas, dt, steer, throttle, brake):
-    for i in range(sigmas.shape[0]):
-        sigmas[i] = bicycle_model_forward(sigmas[i], dt, steer, throttle, brake)
-    return sigmas
+def bicycle_model_predict(x, dt, steer, throttle, brake):
+    """Called by filterpy UKF per sigma point (x is a single 1D state vector)."""
+    return bicycle_model_forward(x, dt, steer, throttle, brake)
 
 
 def measurement_function(x):
