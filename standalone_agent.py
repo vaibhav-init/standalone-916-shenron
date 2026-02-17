@@ -414,7 +414,9 @@ class ShenronStandaloneAgent:
                 target_speed = self.config.target_speeds[idx]
 
         # ---- PID Control ----
-        if self.config.inference_direct_controller and self.config.use_controller_input_prediction:
+        # Force direct controller — the waypoint PID deadlocks when car is stopped
+        # because desired_speed from stationary waypoints is always near 0.
+        if self.config.use_controller_input_prediction:
             steer, throttle, brake = self.net.control_pid_direct(target_speed, pred_angle, gt_velocity)
         elif self.config.use_wp_gru:
             steer, throttle, brake = self.net.control_pid(self.pred_wp, gt_velocity)
