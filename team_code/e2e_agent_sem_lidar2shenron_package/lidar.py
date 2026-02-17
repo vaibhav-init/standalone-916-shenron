@@ -19,11 +19,16 @@ def map_carla_semantic_lidar_latest(carla_sem_lidar_data):
     '''
     Function to map material column in the collected carla ray_cast_shenron to shenron input
     '''
-    # print(carla_sem_lidar_data.shape())
     carla_sem_lidar_data_crop = carla_sem_lidar_data[:, (0, 1, 2, 5)]
-    temp_list = np.array([0, 4, 2, 0, 11, 5, 0, 0, 1, 8, 12, 3, 7, 10, 0, 1, 0, 12, 6, 0, 0, 0, 0])
+    # Extended for CARLA 0.9.16 which has tags up to ~28
+    # Original 23 tags + new ones mapped to 0 (background/unknown)
+    temp_list = np.array([0, 4, 2, 0, 11, 5, 0, 0, 1, 8, 12, 3, 7, 10, 0, 1, 0, 12, 6, 0, 0, 0, 0,
+                          0, 0, 0, 0, 0, 0, 0])  # Extra entries for new 0.9.16 tags
 
-    col = temp_list[(carla_sem_lidar_data_crop[:, 3].astype(int))]
+    # Clamp any out-of-range tags to 0 (background)
+    tags = carla_sem_lidar_data_crop[:, 3].astype(int)
+    tags = np.clip(tags, 0, len(temp_list) - 1)
+    col = temp_list[tags]
     carla_sem_lidar_data_crop[:, 3] = col
 
     return carla_sem_lidar_data_crop
