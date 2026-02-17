@@ -569,6 +569,75 @@ class SensorData:
         self.gnss = data
 
 
+def spawn_traffic(world, tm, num_vehicles=30, num_walkers=20):
+    """Spawn NPC vehicles and pedestrians."""
+    bp_lib = world.get_blueprint_library()
+    spawn_points = world.get_map().get_spawn_points()
+    vehicle_actors = []
+    walker_actors = []
+
+    # --- Spawn Vehicles ---
+    vehicle_bps = bp_lib.filter('vehicle.*')
+    # Filter out bikes/motorcycles for more realistic traffic
+    vehicle_bps = [bp for bp in vehicle_bps if int(bp.get_attribute('number_of_wheels')) >= 4]
+
+    import random
+    random.shuffle(spawn_points)
+    num_vehicles = min(num_vehicles, len(spawn_points) - 1)  # Reserve one for ego
+
+    batch = []
+    for i in range(num_vehicles):
+        bp = random.choice(vehicle_bps)
+        if bp.has_attribute('color'):
+            color = random.choice(bp.get_attribute('color').recommended_values)
+            bp.set_attribute('color', color)
+        bp.set_attribute('role_name', 'autopilot')
+        batch.append(carla.command.SpawnActor(bp, spawn_points[i + 1]).then(
+            carla.command.SetAutopilot(carla.command.FutureActor, True, tm.get_port())))
+
+    results = world.apply_batch_sync(batch, True)
+    for result in results:
+        if not result.error:
+            vehicle_actors.append(result.actor_id)
+
+    print(f"Spawned {len(vehicle_actors)} NPC vehicles")
+
+    # --- Spawn Walkers ---
+    walker_bps = bp_lib.filter('walker.pedestrian.*')
+    walker_controller_bp = bp_lib.find('controller.ai.walker')
+
+    walker_ids = []
+    controller_ids = []
+
+    for _ in range(num_walkers):
+        spawn_loc = world.get_random_location_from_navigation()
+        if spawn_loc is None:
+            continue
+        bp = random.choice(walker_bps)
+        if bp.has_attribute('is_invincible'):
+            bp.set_attribute('is_invincible', 'false')
+        try:
+            walker = world.spawn_actor(bp, carla.Transform(spawn_loc))
+            walker_ids.append(walker.id)
+            controller = world.spawn_actor(walker_controller_bp, carla.Transform(), attach_to=walker)
+            controller_ids.append(controller.id)
+        except:
+            pass
+
+    # Wait a tick then start walking
+    world.tick()
+    all_controllers = world.get_actors(controller_ids)
+    for controller in all_controllers:
+        controller.start()
+        controller.go_to_location(world.get_random_location_from_navigation())
+        controller.set_max_speed(1.0 + random.random() * 1.5)  # 1-2.5 m/s
+
+    print(f"Spawned {len(walker_ids)} pedestrians")
+
+    walker_actors = walker_ids + controller_ids
+    return vehicle_actors, walker_actors
+
+
 def main():
     parser = argparse.ArgumentParser(description='Shenron Standalone Agent for CARLA 0.9.16')
     parser.add_argument('--model-path', required=True, help='Path to deploy folder with model .pth and config.pickle')
@@ -577,6 +646,8 @@ def main():
     parser.add_argument('--town', default='Town04')
     parser.add_argument('--radar-cat', type=int, default=1, help='0=front, 1=front+back, 2=all 4 directions')
     parser.add_argument('--duration', type=int, default=600, help='Duration in seconds')
+    parser.add_argument('--vehicles', type=int, default=30, help='Number of NPC vehicles')
+    parser.add_argument('--walkers', type=int, default=20, help='Number of pedestrians')
     args = parser.parse_args()
 
     # Set environment variables
@@ -614,6 +685,9 @@ def main():
         # Wait for sensors to initialize
         for _ in range(10):
             world.tick()
+
+        # 5b. Spawn traffic
+        npc_vehicle_ids, walker_ids = spawn_traffic(world, tm, args.vehicles, args.walkers)
 
         # 6. Get the route's next waypoint for target_point
         map = world.get_map()
@@ -681,6 +755,12 @@ def main():
         print("\nStopping agent...")
     finally:
         print("Cleaning up...")
+        # Destroy NPC traffic
+        try:
+            client.apply_batch([carla.command.DestroyActor(x) for x in npc_vehicle_ids])
+            client.apply_batch([carla.command.DestroyActor(x) for x in walker_ids])
+        except:
+            pass
         for actor in reversed(actors):
             actor.destroy()
         
