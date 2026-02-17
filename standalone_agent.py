@@ -110,6 +110,10 @@ class ShenronStandaloneAgent:
 
         self.config.debug = False
 
+        # Pre-create data helper (avoid re-creating every step)
+        from data import CARLA_Data
+        self.data = CARLA_Data(root=[], config=self.config, shared_dict=None)
+
         # Load model
         print(f"Loading model from {model_path}...")
         net = LidarCenterNet(self.config)
@@ -337,10 +341,8 @@ class ShenronStandaloneAgent:
 
         for i in lidar_indices:
             lidar_pc = deepcopy(self.lidar_buffer[i])
-            from data import CARLA_Data
-            data = CARLA_Data(root=[], config=self.config, shared_dict=None)
             lidar_histogram = torch.from_numpy(
-                data.lidar_to_histogram_features(lidar_pc, use_ground_plane=self.config.use_ground_plane)
+                self.data.lidar_to_histogram_features(lidar_pc, use_ground_plane=self.config.use_ground_plane)
             ).unsqueeze(0).to(self.device, dtype=torch.float32)
 
             # Process radar from semantic lidar
@@ -400,6 +402,9 @@ class ShenronStandaloneAgent:
 
             if self.uncertainty_weight:
                 uncertainty = pred_target_speed_probs.detach().cpu().numpy()
+                if self.step % 20 == 0:  # Debug every 20 steps
+                    print(f"  [DEBUG] uncertainty={uncertainty}, threshold={self.config.brake_uncertainty_threshold}")
+                    print(f"  [DEBUG] target_speeds={self.config.target_speeds}, pred_angle={pred_angle:.3f}")
                 if uncertainty[0] > self.config.brake_uncertainty_threshold:
                     target_speed = self.config.target_speeds[0]
                 else:
@@ -415,6 +420,9 @@ class ShenronStandaloneAgent:
             steer, throttle, brake = self.net.control_pid(self.pred_wp, gt_velocity)
         else:
             steer, throttle, brake = 0.0, 0.0, 1.0
+
+        if self.step % 20 == 0:
+            print(f"  [DEBUG] target_speed={target_speed:.2f}, steer={steer:.3f}, throttle={throttle:.3f}, brake={brake}")
 
         # ---- Stuck Detection ----
         if speed < 0.1:

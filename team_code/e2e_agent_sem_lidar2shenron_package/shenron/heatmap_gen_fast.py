@@ -39,6 +39,14 @@ def get_gpu_id_most_avlbl_mem():
 # @jit(nopython=True)
 def heatmap_gen(rho, theta, loss, speed, radar, plot_fig, return_power):
     start = time.time()
+    
+    # Downsample points to prevent CUDA OOM
+    max_points = 2000
+    if rho.shape[0] > max_points:
+        idx = np.random.choice(rho.shape[0], max_points, replace=False)
+        rho = rho[idx]; theta = theta[idx]; loss = loss[idx]; speed = speed[idx]
+        print(f"Downsampled to {max_points} points")
+
     range_res = radar.c / (2 * radar.B)
     max_range = range_res * radar.N_sample
 
