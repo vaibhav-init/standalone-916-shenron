@@ -172,7 +172,7 @@ def main():
     parser.add_argument('--town', default='Town04')
     parser.add_argument('--duration', type=int, default=3600, help='Collection duration (seconds)')
     parser.add_argument('--vehicles', type=int, default=50, help='Traffic density')
-    parser.add_argument('--save-dir', default='./dataset', help='Directory to save dataset')
+    parser.add_argument('--save-dir', default='/storage/dataset', help='Directory to save dataset')
     args = parser.parse_args()
 
     date_str = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M")
