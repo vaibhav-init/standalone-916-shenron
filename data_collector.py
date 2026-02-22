@@ -198,7 +198,7 @@ def spawn_traffic(client, world, tm, num_vehicles=30, num_walkers=20):
     return vehicle_actors, walker_actors
 
 def randomize_weather(world):
-    \"\"\"Apply random weather, focusing on varying fog and cloudiness.\"\"\"
+    """Apply random weather, focusing on varying fog and cloudiness."""
     weather = carla.WeatherParameters(
         cloudiness=random.uniform(0.0, 100.0),
         precipitation=random.uniform(0.0, 100.0),
@@ -214,7 +214,7 @@ def randomize_weather(world):
     print(f"Randomized weather: Fog={weather.fog_density:.1f}, Clouds={weather.cloudiness:.1f}, Rain={weather.precipitation:.1f}")
 
 def spawn_obstacle_ahead(world, ego_vehicle, distance=30.0):
-    \"\"\"Spawn a stopped vehicle in the ego's lane to act as an obstacle.\"\"\"
+    """Spawn a stopped vehicle in the ego's lane to act as an obstacle."""
     map = world.get_map()
     ego_transform = ego_vehicle.get_transform()
     ego_wp = map.get_waypoint(ego_transform.location)
