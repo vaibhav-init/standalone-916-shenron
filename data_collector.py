@@ -301,6 +301,12 @@ def main():
         last_obstacle_time = time.time()
         last_weather_time = time.time()
         current_obstacle = None
+        
+        # Anti-stuck logic
+        frames_stuck = 0
+        STUCK_THRESHOLD = 400  # 400 frames at 20fps = 20 seconds stuck
+        
+        spawn_points = world.get_map().get_spawn_points()
 
         while time.time() - start_time < args.duration:
             world.tick()
@@ -408,6 +414,61 @@ def main():
             # Update camera
             loc = transform.transform(carla.Location(x=-6.0, z=3.0))
             spectator.set_transform(carla.Transform(loc, carla.Rotation(pitch=-15.0, yaw=transform.rotation.yaw)))
+
+            # 5. Anti-stuck checking
+            if speed < 0.1:
+                frames_stuck += 1
+            else:
+                frames_stuck = 0
+                
+            if frames_stuck > STUCK_THRESHOLD:
+                print("\nEgo vehicle is STUCK! Respawning at a new location...\n")
+                
+                # Cleanup old sensors and vehicle
+                for s in sensors.values():
+                    try: s.destroy()
+                    except: pass
+                    try: actors.remove(s)
+                    except: pass
+                    
+                try: vehicle.destroy()
+                except: pass
+                try: actors.remove(vehicle)
+                except: pass
+                
+                # Wait a bit
+                for _ in range(20): world.tick()
+
+                # Spawn new ego vehicle at random point
+                bp_lib = world.get_blueprint_library()
+                vehicle_bp = bp_lib.filter('vehicle.lincoln.mkz_2020')[0]
+                new_spawn_point = random.choice(spawn_points)
+                
+                vehicle = world.try_spawn_actor(vehicle_bp, new_spawn_point)
+                while vehicle is None:
+                    new_spawn_point = random.choice(spawn_points)
+                    vehicle = world.try_spawn_actor(vehicle_bp, new_spawn_point)
+
+                print(f"Respawned auto-pilot ego vehicle at {new_spawn_point.location}")
+
+                actors.append(vehicle)
+                vehicle.set_autopilot(True, tm.get_port())
+                tm.distance_to_leading_vehicle(vehicle, 3.0)
+                tm.vehicle_percentage_speed_difference(vehicle, -10.0)
+
+                # Re-attach sensors
+                sensors = attach_sensors(world, vehicle, config)
+                sensors['camera'].listen(sensor_data.on_rgb)
+                sensors['lidar'].listen(sensor_data.on_lidar)
+                sensors['semantic_lidar'].listen(sensor_data.on_semantic_lidar)
+                actors.extend(sensors.values())
+                
+                # Reset stuck counter and start frame
+                frames_stuck = 0
+                start_frame = -1
+                
+                # Settle simulation 
+                for _ in range(10): world.tick()
 
     except KeyboardInterrupt:
         print("\nStopping data collector...")
