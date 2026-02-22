@@ -569,7 +569,36 @@ class SensorData:
         self.gnss = data
 
 
-def spawn_traffic(world, tm, num_vehicles=30, num_walkers=20):
+def spawn_obstacle_ahead(world, ego_vehicle, distance=40.0):
+    """Spawn a stopped vehicle in the ego's lane, `distance` meters ahead."""
+    import random
+    map = world.get_map()
+    ego_transform = ego_vehicle.get_transform()
+    ego_wp = map.get_waypoint(ego_transform.location)
+
+    # Walk forward along the lane
+    next_wps = ego_wp.next(distance)
+    if not next_wps:
+        print("Could not find waypoint ahead for obstacle!")
+        return None
+    obstacle_wp = next_wps[0]
+
+    bp_lib = world.get_blueprint_library()
+    # Pick a big vehicle so it's clearly visible
+    obstacle_bp = bp_lib.filter('vehicle.tesla.model3')[0]
+    obstacle_bp.set_attribute('color', '255,0,0')  # Red so it's obvious
+
+    obstacle_transform = obstacle_wp.transform
+    obstacle_transform.location.z += 0.5  # Lift slightly to avoid ground clipping
+
+    obstacle = world.spawn_actor(obstacle_bp, obstacle_transform)
+    # Apply handbrake so it stays put
+    obstacle.apply_control(carla.VehicleControl(hand_brake=True))
+    print(f"  Spawned STOPPED obstacle {distance}m ahead at {obstacle_transform.location}")
+    return obstacle
+
+
+def spawn_traffic(client, world, tm, num_vehicles=30, num_walkers=20):
     """Spawn NPC vehicles and pedestrians."""
     bp_lib = world.get_blueprint_library()
     spawn_points = world.get_map().get_spawn_points()
@@ -595,7 +624,7 @@ def spawn_traffic(world, tm, num_vehicles=30, num_walkers=20):
         batch.append(carla.command.SpawnActor(bp, spawn_points[i + 1]).then(
             carla.command.SetAutopilot(carla.command.FutureActor, True, tm.get_port())))
 
-    results = world.apply_batch_sync(batch, True)
+    results = client.apply_batch_sync(batch, True)
     for result in results:
         if not result.error:
             vehicle_actors.append(result.actor_id)
@@ -686,8 +715,14 @@ def main():
         for _ in range(10):
             world.tick()
 
-        # 5b. Spawn traffic
-        npc_vehicle_ids, walker_ids = spawn_traffic(world, tm, args.vehicles, args.walkers)
+        # 5b. Spawn a stopped obstacle in the ego's lane
+        obstacle = spawn_obstacle_ahead(world, vehicle, distance=40.0)
+        if obstacle:
+            actors.append(obstacle)
+
+        # 5c. Spawn traffic (optional — uncomment if you also want moving NPCs)
+        # npc_vehicle_ids, walker_ids = spawn_traffic(client, world, tm, args.vehicles, args.walkers)
+        npc_vehicle_ids, walker_ids = [], []
 
         # 6. Get the route's next waypoint for target_point
         map = world.get_map()

@@ -12,6 +12,7 @@ import argparse
 import datetime
 import gzip
 import json
+import random
 
 import cv2
 import numpy as np
@@ -136,11 +137,12 @@ def spawn_traffic(client, world, tm, num_vehicles=30, num_walkers=20):
     bp_lib = world.get_blueprint_library()
     spawn_points = world.get_map().get_spawn_points()
     vehicle_actors = []
+    walker_actors = []
     
+    # Vehicles
     vehicle_bps = bp_lib.filter('vehicle.*')
     vehicle_bps = [bp for bp in vehicle_bps if int(bp.get_attribute('number_of_wheels')) >= 4]
 
-    import random
     random.shuffle(spawn_points)
     num_vehicles = min(num_vehicles, len(spawn_points) - 1)
 
@@ -159,8 +161,81 @@ def spawn_traffic(client, world, tm, num_vehicles=30, num_walkers=20):
         if not result.error:
             vehicle_actors.append(result.actor_id)
 
-    print(f"Spawned {len(vehicle_actors)} NPC vehicles (no walkers to save script complexity)")
-    return vehicle_actors, []
+    print(f"Spawned {len(vehicle_actors)} NPC vehicles")
+
+    # Walkers
+    walker_bps = bp_lib.filter('walker.pedestrian.*')
+    walker_controller_bp = bp_lib.find('controller.ai.walker')
+    
+    walker_ids = []
+    controller_ids = []
+
+    for _ in range(num_walkers):
+        spawn_loc = world.get_random_location_from_navigation()
+        if spawn_loc is None:
+            continue
+        bp = random.choice(walker_bps)
+        if bp.has_attribute('is_invincible'):
+            bp.set_attribute('is_invincible', 'false')
+        try:
+            walker = world.spawn_actor(bp, carla.Transform(spawn_loc))
+            walker_ids.append(walker.id)
+            controller = world.spawn_actor(walker_controller_bp, carla.Transform(), attach_to=walker)
+            controller_ids.append(controller.id)
+        except:
+            pass
+
+    # Start pedestrians walking
+    world.tick()
+    all_controllers = world.get_actors(controller_ids)
+    for controller in all_controllers:
+        controller.start()
+        controller.go_to_location(world.get_random_location_from_navigation())
+        controller.set_max_speed(1.0 + random.random() * 1.5)
+
+    print(f"Spawned {len(walker_ids)} pedestrians")
+    walker_actors = walker_ids + controller_ids
+    return vehicle_actors, walker_actors
+
+def randomize_weather(world):
+    \"\"\"Apply random weather, focusing on varying fog and cloudiness.\"\"\"
+    weather = carla.WeatherParameters(
+        cloudiness=random.uniform(0.0, 100.0),
+        precipitation=random.uniform(0.0, 100.0),
+        precipitation_deposits=random.uniform(0.0, 100.0),
+        wind_intensity=random.uniform(0.0, 100.0),
+        sun_azimuth_angle=random.uniform(0.0, 360.0),
+        sun_altitude_angle=random.uniform(-10.0, 90.0), # Includes night/dusk
+        fog_density=random.uniform(0.0, 100.0), # Up to thick fog
+        fog_distance=random.uniform(0.0, 50.0),
+        wetness=random.uniform(0.0, 100.0)
+    )
+    world.set_weather(weather)
+    print(f"Randomized weather: Fog={weather.fog_density:.1f}, Clouds={weather.cloudiness:.1f}, Rain={weather.precipitation:.1f}")
+
+def spawn_obstacle_ahead(world, ego_vehicle, distance=30.0):
+    \"\"\"Spawn a stopped vehicle in the ego's lane to act as an obstacle.\"\"\"
+    map = world.get_map()
+    ego_transform = ego_vehicle.get_transform()
+    ego_wp = map.get_waypoint(ego_transform.location)
+
+    next_wps = ego_wp.next(distance)
+    if not next_wps:
+        return None
+    obstacle_wp = next_wps[0]
+
+    bp_lib = world.get_blueprint_library()
+    vehicle_bps = bp_lib.filter('vehicle.*')
+    obstacle_bp = random.choice([bp for bp in vehicle_bps if int(bp.get_attribute('number_of_wheels')) >= 4])
+    
+    obstacle_transform = obstacle_wp.transform
+    obstacle_transform.location.z += 0.5 
+
+    obstacle = world.try_spawn_actor(obstacle_bp, obstacle_transform)
+    if obstacle:
+        obstacle.apply_control(carla.VehicleControl(hand_brake=True)) # Keep it stopped
+        print(f"Spawned STOPPED obstacle {distance}m ahead.")
+    return obstacle
 
 # ============================================================
 #  Main Collection Loop
@@ -172,6 +247,7 @@ def main():
     parser.add_argument('--town', default='Town04')
     parser.add_argument('--duration', type=int, default=3600, help='Collection duration (seconds)')
     parser.add_argument('--vehicles', type=int, default=50, help='Traffic density')
+    parser.add_argument('--walkers', type=int, default=50, help='Pedestrian density')
     parser.add_argument('--save-dir', default='/storage/dataset', help='Directory to save dataset')
     args = parser.parse_args()
 
@@ -206,9 +282,13 @@ def main():
         actors.extend(sensors.values())
 
         spectator = world.get_spectator()
+        
+        # Apply random weather initially
+        randomize_weather(world)
+
         for _ in range(10): world.tick()
 
-        npc_vehicle_ids, _ = spawn_traffic(client, world, tm, args.vehicles, 0)
+        npc_vehicle_ids, walker_ids = spawn_traffic(client, world, tm, args.vehicles, args.walkers)
 
         print("\n" + "=" * 50)
         print(f" Data Collection Started! Saving to: {base_dir}")
@@ -218,8 +298,32 @@ def main():
         start_frame = -1
         frame_idx = 0
         
+        last_obstacle_time = time.time()
+        last_weather_time = time.time()
+        current_obstacle = None
+
         while time.time() - start_time < args.duration:
             world.tick()
+
+            # Randomize weather every 60 seconds
+            if time.time() - last_weather_time > 60.0:
+                randomize_weather(world)
+                last_weather_time = time.time()
+
+            # Spawn a random obstacle every 45-90 seconds to simulate scenarios
+            if time.time() - last_obstacle_time > random.uniform(45.0, 90.0):
+                if current_obstacle:
+                    try:
+                        current_obstacle.destroy()
+                        actors.remove(current_obstacle)
+                    except: pass
+                
+                # Spawn a new obstacle ~20 to 50 meters ahead
+                dist = random.uniform(20.0, 50.0)
+                current_obstacle = spawn_obstacle_ahead(world, vehicle, distance=dist)
+                if current_obstacle:
+                    actors.append(current_obstacle)
+                last_obstacle_time = time.time()
 
             if sensor_data.rgb is None or sensor_data.lidar is None or sensor_data.semantic_lidar is None:
                 continue
@@ -312,6 +416,7 @@ def main():
         if 'client' in locals():
             try:
                 client.apply_batch([carla.command.DestroyActor(x) for x in npc_vehicle_ids])
+                client.apply_batch([carla.command.DestroyActor(x) for x in walker_ids])
             except: pass
         for actor in reversed(actors):
             try: actor.destroy()
