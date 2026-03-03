@@ -369,10 +369,25 @@ def main():
 
     date_str = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M")
     dataset_name = f'dataset_{args.town}_{date_str}'
-    base_dir = os.path.join(args.save_dir, dataset_name, 'route_00')
+    dataset_root = os.path.join(args.save_dir, dataset_name)
     
-    for subdir in ['rgb', 'lidar', 'measurements', 'radar_data_front_86', 'radar_data_rear_86', 'boxes']:
-        os.makedirs(os.path.join(base_dir, subdir), exist_ok=True)
+    route_index = 0
+    
+    def create_route_dir(root, idx):
+        """Create a new route_XX directory with all required subdirs."""
+        route_dir = os.path.join(root, f'route_{idx:02d}')
+        for subdir in ['rgb', 'lidar', 'measurements', 'radar_data_front_86', 'radar_data_rear_86', 'boxes']:
+            os.makedirs(os.path.join(route_dir, subdir), exist_ok=True)
+        return route_dir
+    
+    def write_route_results(route_dir):
+        """Write results.json.gz for a completed route."""
+        results_file = os.path.join(route_dir, 'results.json.gz')
+        results_data = {'scores': {'score_composed': 100.0, 'score_route': 100.0, 'score_penalty': 1.0}}
+        with gzip.open(results_file, 'wt', encoding='utf-8') as f:
+            json.dump(results_data, f, indent=4)
+    
+    base_dir = create_route_dir(dataset_root, route_index)
 
     actors = []
     npc_vehicle_ids, walker_ids = [], []
@@ -476,6 +491,14 @@ def main():
                 start_frame = -1
                 last_respawn_time = time.time()
                 randomize_weather(world)  # New weather for each route
+                
+                # Write results for completed route and start a new one
+                write_route_results(base_dir)
+                print(f"Saved results for route_{route_index:02d}")
+                route_index += 1
+                frame_idx = 0
+                base_dir = create_route_dir(dataset_root, route_index)
+                print(f"Now saving to: {base_dir}")
                 
                 for _ in range(10): world.tick()
                 continue
@@ -665,6 +688,14 @@ def main():
                 start_frame = -1
                 last_respawn_time = time.time()  # Reset so we don't immediately respawn again
                 
+                # Write results for completed route and start a new one
+                write_route_results(base_dir)
+                print(f"Saved results for route_{route_index:02d}")
+                route_index += 1
+                frame_idx = 0
+                base_dir = create_route_dir(dataset_root, route_index)
+                print(f"Now saving to: {base_dir}")
+                
                 # Settle simulation 
                 for _ in range(10): world.tick()
 
@@ -687,21 +718,11 @@ def main():
             world.apply_settings(settings)
         except: pass
 
-        # Generate results.json.gz for training compatibility
+        # Generate results.json.gz for the final route
         try:
             if 'base_dir' in locals() and os.path.exists(base_dir):
-                print("\nCreating results.json.gz for training compatibility...")
-                results_data = {
-                    'scores': {
-                        'score_composed': 100.0,
-                        'score_route': 100.0,
-                        'score_penalty': 1.0
-                    }
-                }
-                results_file = os.path.join(base_dir, 'results.json.gz')
-                with gzip.open(results_file, 'wt', encoding='utf-8') as f:
-                    json.dump(results_data, f, indent=4)
-                print(f"Saved results file to: {results_file}")
+                write_route_results(base_dir)
+                print(f"Saved results for final route_{route_index:02d}")
         except Exception as e:
             print(f"Warning: Failed to generate results.json.gz - {e}")
 
