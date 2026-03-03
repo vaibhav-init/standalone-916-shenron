@@ -475,6 +475,7 @@ def main():
                 frames_stuck = 0
                 start_frame = -1
                 last_respawn_time = time.time()
+                randomize_weather(world)  # New weather for each route
                 
                 for _ in range(10): world.tick()
                 continue
