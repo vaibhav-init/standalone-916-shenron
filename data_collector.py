@@ -415,7 +415,8 @@ def main():
         frame_idx = 0
         
         last_obstacle_time = time.time()
-        last_weather_time = time.time()
+        last_respawn_time = time.time()
+        RESPAWN_INTERVAL = 300  # Respawn at new location every 5 minutes
         current_obstacle = None
         
         # Anti-stuck logic
@@ -427,10 +428,56 @@ def main():
         while time.time() - start_time < args.duration:
             world.tick()
 
-            # Randomize weather every 60 seconds
-            if time.time() - last_weather_time > 60.0:
-                randomize_weather(world)
-                last_weather_time = time.time()
+            # Respawn at a new location every 5 minutes for route diversity
+            if time.time() - last_respawn_time > RESPAWN_INTERVAL:
+                print(f"\n{'='*50}")
+                print(f" 5 min elapsed — Respawning at new location for route diversity!")
+                print(f"{'='*50}\n")
+                
+                # Cleanup old sensors and vehicle
+                for s in sensors.values():
+                    try: s.destroy()
+                    except: pass
+                    try: actors.remove(s)
+                    except: pass
+                    
+                try: vehicle.destroy()
+                except: pass
+                try: actors.remove(vehicle)
+                except: pass
+                
+                for _ in range(20): world.tick()
+
+                # Spawn new ego vehicle at a random point
+                bp_lib = world.get_blueprint_library()
+                vehicle_bp = bp_lib.filter('vehicle.lincoln.mkz_2020')[0]
+                new_spawn_point = random.choice(spawn_points)
+                
+                vehicle = world.try_spawn_actor(vehicle_bp, new_spawn_point)
+                while vehicle is None:
+                    new_spawn_point = random.choice(spawn_points)
+                    vehicle = world.try_spawn_actor(vehicle_bp, new_spawn_point)
+
+                print(f"Respawned ego vehicle at {new_spawn_point.location}")
+
+                actors.append(vehicle)
+                vehicle.set_autopilot(True, tm.get_port())
+                tm.distance_to_leading_vehicle(vehicle, 3.0)
+                tm.vehicle_percentage_speed_difference(vehicle, -10.0)
+
+                # Re-attach sensors
+                sensors = attach_sensors(world, vehicle, config)
+                sensors['camera'].listen(sensor_data.on_rgb)
+                sensors['lidar'].listen(sensor_data.on_lidar)
+                sensors['semantic_lidar'].listen(sensor_data.on_semantic_lidar)
+                actors.extend(sensors.values())
+                
+                frames_stuck = 0
+                start_frame = -1
+                last_respawn_time = time.time()
+                
+                for _ in range(10): world.tick()
+                continue
 
             # Spawn a random obstacle every 45-90 seconds to simulate scenarios
             if time.time() - last_obstacle_time > random.uniform(45.0, 90.0):
@@ -612,9 +659,10 @@ def main():
                 sensors['semantic_lidar'].listen(sensor_data.on_semantic_lidar)
                 actors.extend(sensors.values())
                 
-                # Reset stuck counter and start frame
+                # Reset stuck counter, start frame, and respawn timer
                 frames_stuck = 0
                 start_frame = -1
+                last_respawn_time = time.time()  # Reset so we don't immediately respawn again
                 
                 # Settle simulation 
                 for _ in range(10): world.tick()
